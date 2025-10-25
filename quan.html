@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Liên Quân Mini - Game đơn giản</title>
+  <style>
+    :root{--bg:#0f1724;--card:#111827;--accent:#f97316}
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:linear-gradient(180deg,#051023 0%, #08203a 100%);color:#e6eef8}
+    .wrap{display:flex;align-items:center;justify-content:center;height:100%;padding:16px}
+    .card{width:100%;max-width:980px;background:rgba(255,255,255,0.03);border-radius:12px;padding:14px;box-shadow:0 6px 30px rgba(2,6,23,0.6)}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+    h1{font-size:18px;margin:0}
+    .controls{font-size:13px;opacity:0.9}
+    canvas{display:block;border-radius:8px;background:linear-gradient(180deg,#0b2436,#05202b);width:100%;height:600px}
+    .ui{display:flex;gap:8px;margin-top:8px;align-items:center}
+    .btn{background:var(--accent);border:none;padding:8px 12px;border-radius:8px;color:white;cursor:pointer}
+    .small{font-size:13px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <header>
+        <h1>Liên Quân Mini — Demo đơn giản</h1>
+        <div class="controls small">Di chuyển: WASD / Mũi tên — Tấn công: Space — Lướt: Shift</div>
+      </header>
+
+      <canvas id="game" width="900" height="600"></canvas>
+      <div class="ui">
+        <button id="start" class="btn">Bắt đầu</button>
+        <div id="status" class="small">Máu: <span id="hp">100</span> — Điểm: <span id="score">0</span></div>
+        <div style="margin-left:auto" class="small">Phiên bản: 1.0</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+// Liên Quân Mini - Single file HTML/JS game (simple)
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  // UI
+  const hpEl = document.getElementById('hp');
+  const scoreEl = document.getElementById('score');
+  const startBtn = document.getElementById('start');
+  const statusEl = document.getElementById('status');
+
+  let running = false;
+
+  // Player
+  const player = {
+    x: W/2, y: H/2, r:18,
+    speed: 2.6,
+    vx:0, vy:0,
+    hp:100,
+    maxHp:100,
+    attackCooldown:0,
+    dashCooldown:0
+  };
+
+  let score = 0;
+
+  // Enemies
+  const enemies = [];
+
+  function spawnEnemy(){
+    const side = Math.floor(Math.random()*4);
+    let x,y;
+    if(side===0){x=-20;y=Math.random()*H}
+    else if(side===1){x=W+20;y=Math.random()*H}
+    else if(side===2){x=Math.random()*W;y=-20}
+    else {x=Math.random()*W;y=H+20}
+    enemies.push({x,y,r:14,spd:0.9+Math.random()*1.2,hp:20 + Math.floor(Math.random()*10)})
+  }
+
+  // Controls
+  const keys = {};
+  window.addEventListener('keydown', e=>{keys[e.key.toLowerCase()]=true});
+  window.addEventListener('keyup', e=>{keys[e.key.toLowerCase()]=false});
+
+  // Attack projectiles
+  const bullets = [];
+
+  // Simple helper
+  function distance(a,b){const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy)}
+
+  // Reset
+  function reset(){
+    player.x = W/2; player.y = H/2; player.hp = player.maxHp; player.attackCooldown = 0; player.dashCooldown = 0;
+    enemies.length = 0; bullets.length = 0; score = 0; hpEl.textContent = player.hp; scoreEl.textContent = score;
+  }
+
+  let spawnTimer = 0;
+
+  function update(dt){
+    if(!running) return;
+    // Input movement
+    let mx = 0, my=0;
+    if(keys['arrowup']||keys['w']) my -= 1;
+    if(keys['arrowdown']||keys['s']) my += 1;
+    if(keys['arrowleft']||keys['a']) mx -= 1;
+    if(keys['arrowright']||keys['d']) mx += 1;
+    const mag = Math.hypot(mx,my) || 1;
+    player.vx = (mx/mag) * player.speed;
+    player.vy = (my/mag) * player.speed;
+
+    // Dash (shift)
+    if((keys['shift']||keys['shiftleft']) && player.dashCooldown<=0){
+      player.x += player.vx*18 || 0; player.y += player.vy*18 || 0;
+      player.dashCooldown = 1.6; // seconds
+    }
+
+    // Attack (space)
+    if(keys[' '] && player.attackCooldown<=0){
+      // shoot bullet in facing direction (if not moving, shoot up)
+      let dirx = player.vx || 0, diry = player.vy || -1;
+      const magb = Math.hypot(dirx,diry) || 1;
+      dirx/=magb; diry/=magb;
+      bullets.push({x:player.x + dirx*(player.r+8), y:player.y + diry*(player.r+8), vx:dirx*6, vy:diry*6, r:6, life:1.2});
+      player.attackCooldown = 0.28;
+    }
+
+    // Update player
+    player.x += player.vx; player.y += player.vy;
+    // Keep inside
+    player.x = Math.max(player.r, Math.min(W-player.r, player.x));
+    player.y = Math.max(player.r, Math.min(H-player.r, player.y));
+
+    player.attackCooldown = Math.max(0, player.attackCooldown - dt);
+    player.dashCooldown = Math.max(0, player.dashCooldown - dt);
+
+    // Update bullets
+    for(let i=bullets.length-1;i>=0;i--){
+      const b = bullets[i];
+      b.x += b.vx; b.y += b.vy; b.life -= dt;
+      if(b.life<=0 || b.x<-10 || b.x>W+10 || b.y<-10 || b.y>H+10) bullets.splice(i,1);
+    }
+
+    // Spawn enemies gradually
+    spawnTimer += dt;
+    if(spawnTimer > Math.max(0.35, 1.6 - score*0.02)){
+      spawnTimer = 0; spawnEnemy();
+    }
+
+    // Update enemies
+    for(let i=enemies.length-1;i>=0;i--){
+      const e = enemies[i];
+      // move toward player
+      const dx = player.x - e.x, dy = player.y - e.y;
+      const md = Math.hypot(dx,dy) || 1;
+      e.x += (dx/md)*e.spd; e.y += (dy/md)*e.spd;
+
+      // collisions with player
+      if(Math.hypot(e.x-player.x,e.y-player.y) < e.r + player.r){
+        player.hp -= 9 * dt; // continuous damage if touching
+      }
+
+      // bullets hit
+      for(let j=bullets.length-1;j>=0;j--){
+        const b = bullets[j];
+        if(Math.hypot(b.x - e.x, b.y - e.y) < b.r + e.r){
+          e.hp -= 12; bullets.splice(j,1);
+          if(e.hp <= 0){ enemies.splice(i,1); score += 5; scoreEl.textContent = score; break; }
+        }
+      }
+
+    }
+
+    // If player hp <=0 -> game over
+    if(player.hp <= 0){ running = false; statusEl.textContent = 'Bạn đã thua! Nhấn Bắt đầu để chơi lại.'; }
+
+    // clamp hp and update UI
+    player.hp = Math.max(0, Math.min(player.maxHp, player.hp));
+    hpEl.textContent = Math.floor(player.hp);
+  }
+
+  function draw(){
+    // background
+    ctx.clearRect(0,0,W,H);
+
+    // ground grid
+    ctx.save();
+    ctx.globalAlpha = 0.08;
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1;
+    for(let gx=0; gx<W; gx+=40){ ctx.beginPath(); ctx.moveTo(gx,0); ctx.lineTo(gx,H); ctx.stroke(); }
+    for(let gy=0; gy<H; gy+=40){ ctx.beginPath(); ctx.moveTo(0,gy); ctx.lineTo(W,gy); ctx.stroke(); }
+    ctx.restore();
+
+    // bullets
+    for(const b of bullets){
+      ctx.beginPath(); ctx.fillStyle = '#ffd66b'; ctx.arc(b.x,b.y,b.r,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.arc(b.x,b.y,b.r+2,0,Math.PI*2); ctx.stroke();
+    }
+
+    // enemies
+    for(const e of enemies){
+      const hpRatio = Math.max(0, e.hp)/30;
+      ctx.beginPath(); ctx.fillStyle = '#c43a3a'; ctx.arc(e.x,e.y,e.r,0,Math.PI*2); ctx.fill();
+      // hp bar
+      ctx.fillStyle = '#222'; ctx.fillRect(e.x-16, e.y - e.r - 10, 32,6);
+      ctx.fillStyle = '#6ee7b7'; ctx.fillRect(e.x-16, e.y - e.r - 10, 32*hpRatio,6);
+    }
+
+    // player
+    // outer circle
+    ctx.beginPath(); ctx.fillStyle = '#3b82f6'; ctx.arc(player.x,player.y,player.r+6,0,Math.PI*2); ctx.fill();
+    // inner hero
+    ctx.beginPath(); ctx.fillStyle = '#60a5fa'; ctx.arc(player.x,player.y,player.r,0,Math.PI*2); ctx.fill();
+
+    // player hp bar
+    const pW = 120; const pX = 12, pY = 12;
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(pX-2,pY-2,pW+4,18);
+    ctx.fillStyle = '#ef4444'; ctx.fillRect(pX,pY, pW*(player.hp/player.maxHp), 14);
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.strokeRect(pX,pY,pW,14);
+
+    // cooldown bars
+    ctx.fillStyle = 'rgba(255,255,255,0.09)'; ctx.fillRect(pX, pY+20, 110,8);
+    const ac = Math.max(0, 1 - (player.attackCooldown/0.28));
+    ctx.fillStyle = '#ffd700'; ctx.fillRect(pX, pY+20, 110*ac,8);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.09)'; ctx.fillRect(pX+0, pY+30, 110,8);
+    const dc = Math.max(0, 1 - (player.dashCooldown/1.6));
+    ctx.fillStyle = '#34d399'; ctx.fillRect(pX, pY+30, 110*dc,8);
+
+    // score top-right
+    ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fillRect(W-140, 12, 128, 30);
+    ctx.fillStyle = '#fff'; ctx.font = '18px Arial'; ctx.fillText('Điểm: ' + score, W-128, 32);
+
+    // game paused overlay
+    if(!running){
+      ctx.fillStyle = 'rgba(2,6,23,0.6)'; ctx.fillRect(0,0,W,H);
+      ctx.fillStyle = '#fff'; ctx.font = '34px Arial'; ctx.textAlign='center'; ctx.fillText('Nhấn Bắt đầu để chơi', W/2, H/2);
+      ctx.textAlign='left';
+    }
+  }
+
+  let last = performance.now();
+  function loop(t){
+    const dt = Math.min(0.05, (t-last)/1000);
+    update(dt);
+    draw();
+    last = t;
+    requestAnimationFrame(loop);
+  }
+
+  startBtn.addEventListener('click', ()=>{
+    if(!running){ reset(); running = true; statusEl.textContent = 'Đang chơi...'; }
+  });
+
+  // initial spawn some
+  for(let i=0;i<3;i++) spawnEnemy();
+
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
